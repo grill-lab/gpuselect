@@ -1,0 +1,2 @@
+nvidia-ml-py==12.560.30
+pytest==8.3.3

@@ -4,7 +4,7 @@ Automatic selection of idle GPUs by modifying `CUDA_VISIBLE_DEVICES`.
 
 The intended use for this package is to make GPU allocation simpler on shared servers with multiple GPUs in the absence of any more complex resource scheduling framework (and to help reduce the number of idling GPUs).
 
-The idea is to avoid having to manually allocate GPUs to users and instead applying a few simple default rules to pick idle GPU(s) each time you run a script, updating the value of `CUDA_VISIBLE_DEVICES` to reflect the selected device(s).
+The idea is to avoid having to manually allocate GPUs to users and instead apply a few simple default rules to pick idle GPU(s) each time you run a script, updating the value of `CUDA_VISIBLE_DEVICES` to reflect the selected device(s).
 
 The Python package contains a single core method named `gpuselect()`. Called with default parameters, this will:
   * enumerate all GPUs in the system through the [NVML API](https://docs.nvidia.com/deploy/nvml-api/index.html)
@@ -59,7 +59,6 @@ gpuselect()
 ```
 
 > **Note**: it's probably best to put this import at the top of your script, because some packages (`e.g. pytorch`) will query the value of `CUDA_VISIBLE_DEVICES` on import and so updating it afterwards has no effect. 
-
 
 #### Request GPU(s) of a specific type
 

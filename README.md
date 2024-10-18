@@ -15,7 +15,7 @@ The Python package contains a single core method named `gpuselect()`. Called wit
 
 Adding this to an existing Python script should only require a couple of lines of code in most cases:
 ```python
-# import the module and call gpuselect with default parameters
+# import the module at the start of your script, and call gpuselect with default parameters
 from gpuselect import gpuselect
 gpuselect()
 # CUDA_VISIBLE_DEVICES is now updated

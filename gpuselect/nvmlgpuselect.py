@@ -67,16 +67,7 @@ def __scan_gpus(devices: list[int]) -> list[GpuInfo]:
         # GPU utilization information (this includes both device and memory utilization)
         utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
 
-        # Get the number of processes using the GPU. This method is intended to be used by code
-        # that calls it at regular intervals, in which case you can set the "timestamp" parameter
-        # to the value from the previous call to exclude already-seen entries. In this case it's
-        # a one-off call, so setting the timestamp to 0 means "return all the data the driver
-        # has in its internal buffer". This can vary from device to device. It also throws an
-        # exception if there is no data available, so in that case the result is set to an empty list.
-        try:
-            gpu_processes = pynvml.nvmlDeviceGetProcessesUtilizationInfo(handle, 0)
-        except pynvml.NVMLError as e:
-            gpu_processes = []
+        gpu_processes = pynvml.nvmlDeviceGetComputeRunningProcesses_v3(handle)
 
         gpu_info.append(
             GpuInfo(i, name, utilization.gpu, utilization.memory, len(gpu_processes))

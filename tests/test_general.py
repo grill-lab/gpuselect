@@ -20,9 +20,15 @@ def sample_gpuinfo() -> Generator:
         util: int = 0,
         mem_util: int = 0,
         processes: int = 0,
+        fan_speed: int = 0,
+        effective_power_limit: int = 300,
+        performance_state: int = 15,
+        power_usage: int = 0,
+        temperature: int = 25,
+        is_throttling: int = 0
     ) -> GpuInfo:
         return GpuInfo(
-            device=device, name=name, util=util, mem_util=mem_util, processes=processes
+            device, name, util, mem_util, processes, fan_speed, effective_power_limit, performance_state, power_usage, temperature, is_throttling
         )
 
     yield _build_gpuinfo

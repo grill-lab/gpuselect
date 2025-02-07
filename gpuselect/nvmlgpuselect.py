@@ -20,7 +20,74 @@ class GpuInfo(NamedTuple):
     name: str
     util: int
     mem_util: int
+    mem_free: int
+    mem_used: int
+    mem_total: int
     processes: int
+    fan_speed: int
+    effective_power_limt: int
+    performance_state: int
+    power_usage: int
+    temperature: int
+    is_throttling: int
+
+
+def pynvml_get_gpu_state(device_index: int) -> GpuInfo:
+    # note that all of these functions typically return a wrapper around a C struct, see
+    # the API for details:
+    # https://docs.nvidia.com/deploy/nvml-api/nvml-api-reference.html#nvml-api-reference
+    handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
+    mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+    utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
+
+    device = device_index
+    name = pynvml.nvmlDeviceGetName(handle)
+    mem_free = mem_info.free
+    mem_used = mem_info.used
+    mem_total = mem_info.total
+    # note this is just the *number* of processes
+    processes = len(pynvml.nvmlDeviceGetComputeRunningProcesses_v3(handle))
+
+    # fan speed, effective power limit, performance state, power usage, temperature
+    fan_speed = pynvml.nvmlDeviceGetFanSpeed(handle)
+    effective_power_limit = pynvml.nvmlDeviceGetEnforcedPowerLimit(handle)
+    performance_state = pynvml.nvmlDeviceGetPerformanceState(handle)
+    power_usage = pynvml.nvmlDeviceGetPowerUsage(handle)
+    temperature = pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+
+    # try to check for throttling. the result is a bitmask and the values are listed at:
+    # https://docs.nvidia.com/deploy/nvml-api/group__nvmlClocksEventReasons.html#group__nvmlClocksEventReasons_1g78486f43e3612308528ec9849b9658ec
+    #
+    # since there seem to be many values that indicate different types of throttling and all we
+    # really want is to know IF there is any throttling, this just checks for a couple of non-throttling states:
+    #   - nvmlClocksEventReasonGpuIdle (GPU is idle, clocks are low for that reason)
+    #   - nvmlClocksEventReasonNone (GPU is clocked as high as possible)
+    # if either of these are set in the bitmask then we shouldn't be throttling
+    reasons = pynvml.nvmlDeviceGetCurrentClocksEventReasons(handle)
+
+    is_throttling = (
+        0
+        if reasons & pynvml.nvmlClocksEventReasonGpuIdle
+        or reasons & pynvml.nvmlClocksEventReasonNone
+        else 1
+    )
+
+    return GpuInfo(
+        device,
+        name,
+        utilization.gpu,
+        utilization.memory,
+        mem_free,
+        mem_used,
+        mem_total,
+        processes,
+        fan_speed,
+        effective_power_limit,
+        performance_state,
+        power_usage,
+        temperature,
+        is_throttling,
+    )
 
 
 def __scan_gpus(devices: list[int]) -> list[GpuInfo]:
@@ -28,12 +95,21 @@ def __scan_gpus(devices: list[int]) -> list[GpuInfo]:
     Return a list of available GPUs and their current utilization stats.
 
     This method enumerates GPUs through the NVML API, and for each one creates
-    a `GpuInfo` object which contains:
-        - device ID
-        - device name
-        - utilization %
-        - memory utilization %
-        - process count
+    a `GpuInfo` object which contains the following information (field names in parentheses):
+        - device ID (device)
+        - device name (name)
+        - utilization % (util)
+        - memory utilization % (mem_util)
+        - memory free, bytes (mem_free)
+        - memory used, bytes (mem_used)
+        - memory total, bytes (mem_total)
+        - process count (processes)
+        - fan speed % (fan_speed)
+        - effective power limit in mW (effective_power_limit)
+        - performance state, 0 = max, 15 = min (performance_state)
+        - power usage in mW (power_usage)
+        - temperature in deg C (temperature)
+        - throttling state, 0 if no throttling, for other values see https://docs.nvidia.com/deploy/nvml-api/group__nvmlClocksEventReasons.html (is_throttling)
 
     Args:
         devices: a list of device IDs that may have been selected by the application using
@@ -60,18 +136,8 @@ def __scan_gpus(devices: list[int]) -> list[GpuInfo]:
 
     # iterate over all GPUs in the system
     for i in range(device_count):
-        handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-
-        # device name
-        name: str = pynvml.nvmlDeviceGetName(handle)
-        # GPU utilization information (this includes both device and memory utilization)
-        utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
-
-        gpu_processes = pynvml.nvmlDeviceGetComputeRunningProcesses_v3(handle)
-
-        gpu_info.append(
-            GpuInfo(i, name, utilization.gpu, utilization.memory, len(gpu_processes))
-        )
+        info = pynvml_get_gpu_state(i)
+        gpu_info.append(info)
         logger.debug(f"Device {i}: {gpu_info[-1]}")
 
     pynvml.nvmlShutdown()
@@ -115,7 +181,7 @@ def __filter_gpus(
 
             filtered_gpus = [gpu_info[d] for d in matched_ids]
             logger.debug(f"Name filter, {len(filtered_gpus)} devices left")
-        else: 
+        else:
             filtered_gpus = gpu_info
 
         # Then filter by utilization/process count
@@ -151,7 +217,7 @@ def __filter_gpus(
     return random.sample(filtered_gpus, count)
 
 
-def gpustatus(only_cvd: bool = True) -> list[dict[str, int | str]]:
+def gpustatus(only_cvd: bool = True) -> list[GpuInfo]:
     """
     Utility method to query information about GPUs in the system.
 
@@ -160,24 +226,30 @@ def gpustatus(only_cvd: bool = True) -> list[dict[str, int | str]]:
     `CUDA_VISIBLE_DEVICES` environment variable and only report on those devices. Otherwise
     it will query all GPUs visible through the NVML API.
 
-    The return value will be a list of dicts, where each dict has the following keys:
-        - device: device ID (int)
-        - name: device name (str)
-        - utilization: device utilization % (int)
-        - mem_utilization: device memory utilization % (int)
-        - processes: processes using device (int)
-        - performance_state: device performance state, 0-15 (int)
-        - power_usage: device power draw in watts (int)
-        - temperature: device temperature in deg C (int)
+    The return value will be a list of `GpuInfo` objects, each of
+    which contains the following information (field names in parentheses):
+        - device ID (device)
+        - device name (name)
+        - utilization % (util)
+        - memory utilization % (mem_util)
+        - memory free, bytes (mem_free)
+        - memory used, bytes (mem_used)
+        - memory total, bytes (mem_total)
+        - process count (processes)
+        - fan speed % (fan_speed)
+        - effective power limit in mW (effective_power_limit)
+        - performance state, 0 = max, 15 = min (performance_state)
+        - power usage in mW (power_usage)
+        - temperature in deg C (temperature)
+        - throttling state, 0 if no throttling, for other values see https://docs.nvidia.com/deploy/nvml-api/group__nvmlClocksEventReasons.html (is_throttling)
 
     Args:
         only_cvd: `True` to query GPUs based on `CUDA_VISIBLE_DEVICES`, `False` to query all
 
     Returns:
-        a list of dicts, containing the current value of each metric listed above for each GPU
+        a list of `GpuInfos`, containing the current value of each metric listed above for each GPU
     """
-    gpus: list[dict[str, int | str]] = []
-
+    gpus: list[GpuInfo] = []
     pynvml.nvmlInit()
 
     device_count = pynvml.nvmlDeviceGetCount()
@@ -195,33 +267,8 @@ def gpustatus(only_cvd: bool = True) -> list[dict[str, int | str]]:
         if i not in visible_gpus:
             continue
 
-        handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-        utilization = pynvml.nvmlDeviceGetUtilizationRates(handle)
-        name = pynvml.nvmlDeviceGetName(handle)
-
-        try:
-            processes = pynvml.nvmlDeviceGetProcessUtilization(handle, 0)
-        except pynvml.NVMLError as e:
-            processes = []
-
-        performance_state = pynvml.nvmlDeviceGetPerformanceState(handle)
-        power_usage = pynvml.nvmlDeviceGetPowerUsage(handle)
-        temperature = pynvml.nvmlDeviceGetTemperature(
-            handle, pynvml.NVML_TEMPERATURE_GPU
-        )
-
-        gpus.append(
-            {
-                "device": i,
-                "name": name,
-                "utilization": utilization.gpu,
-                "mem_utilization": utilization.memory,
-                "processes": len(processes),
-                "performance_state": performance_state,
-                "power_usage": power_usage,
-                "temperature": temperature,
-            }
-        )
+        info = pynvml_get_gpu_state(i)
+        gpus.append(info)
 
     pynvml.nvmlShutdown()
     return gpus
@@ -398,7 +445,12 @@ def main():
         required=False,
         default=0,
     )
-    _ = parser.add_argument("-q", "--quiet", help="Do *not* print the new value of CUDA_VISIBLE_DEVICES on exit", action="store_true")
+    _ = parser.add_argument(
+        "-q",
+        "--quiet",
+        help="Do *not* print the new value of CUDA_VISIBLE_DEVICES on exit",
+        action="store_true",
+    )
 
     args, unknown_args = parser.parse_known_args()
 

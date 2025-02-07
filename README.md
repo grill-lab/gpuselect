@@ -116,6 +116,12 @@ def custom_select(gpu: GpuInfo) -> bool:
     #   util (int): device utilization percentage
     #   mem_util (int): device memory utilization percentage
     #   processes (int): device process count
+    #   fan_speed (int): fan speed as a percentage of max
+    #   effective_power_limit (int): the device's power limit in mW
+    #   performance_state (int): power management state (0 = max power state, 15 = min power state)
+    #   power_usage (int): device's power usage in mW
+    #   temperature (int): device temperature in deg C
+    #   is_throttling (int): will be 0 if the device is operating normally, otherwise values from https://docs.nvidia.com/deploy/nvml-api/group__nvmlClocksEventReasons.html
 
     # match any device with "3090" in the name and <= 5% utilization
     return "3090" in gpu.name and gpu.util <= 5
@@ -151,16 +157,7 @@ gpuselect()
 
 The `gpuselect` module also exposes a function called `gpustatus` which you can use to retrieve GPU state in your own code. This can be used independently of the `gpuselect` functionality.
 
-The function returns a list of `dicts`, one for each GPU. Each `dict` contains the following keys and values:
-
-  * `device`: device ID (`int`)
-  * `name`: device name (`str`)
-  * `utilization`: device utilization % (`int`)
-  * `mem_utilization`: device memory utilization % (`int`)
-  * `processes`: processes using device (`int`)
-  * `performance_state`: device performance state, 0-15 (`int`)
-  * `power_usage`: device power draw in milliwatts (`int`)
-  * `temperature`: device temperature in deg C (`int`)
+The function returns a list of `GpuInfo` objects with fields as described in the `Custom selection` section above, one for each GPU. 
 
 By default, this will only report on the GPUs visible according to `CUDA_VISIBLE_DEVICES`. Depending on the context you're running the code in, you can also choose to view data on all GPUs:
 

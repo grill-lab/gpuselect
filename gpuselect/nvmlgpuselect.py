@@ -451,8 +451,17 @@ def main():
         help="Do *not* print the new value of CUDA_VISIBLE_DEVICES on exit",
         action="store_true",
     )
+    _ = parser.add_argument(
+        "-D",
+        "--debug",
+        help="Display extra logging output for debugging",
+        action="store_true",
+    )
 
     args, unknown_args = parser.parse_known_args()
+
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
 
     cuda_visible_devices = gpuselect(
         args.count, args.devices, args.name, args.util, args.mem_util, args.processes
@@ -474,15 +483,20 @@ def main():
 
     # text=True opens the output streams in non-binary format, bufsize=1 uses line-buffering mode
     cmd = subprocess.Popen(
-        unknown_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, bufsize=1,
+        unknown_args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        bufsize=1,
     )
 
-    # read a line from a file object associated with the new process and 
+    # read a line from a file object associated with the new process and
     # write it to the appropriate system stream
     def handle_output(input_stream, output_stream):
         output_stream.write(input_stream.readline())
 
-    # create a selector and register for READ events on both process output streams 
+    # create a selector and register for READ events on both process output streams
     sel = selectors.DefaultSelector()
     sel.register(cmd.stdout, selectors.EVENT_READ, (handle_output, sys.stdout))
     sel.register(cmd.stderr, selectors.EVENT_READ, (handle_output, sys.stderr))
@@ -493,11 +507,11 @@ def main():
         sel_events = sel.select()
 
         # the return value is a list of (key, events) tuples, where key is an object
-        # identifying a source registered above and events is the event(s) that 
+        # identifying a source registered above and events is the event(s) that
         # were triggered for that object. here we only care about read events so
         # that values is ignored
         for key, _ in sel_events:
-            # the .data field contains the value passed as the 3rd parameter to 
+            # the .data field contains the value passed as the 3rd parameter to
             # selector.register above
             callback, output_stream = key.data
             callback(key.fileobj, output_stream)

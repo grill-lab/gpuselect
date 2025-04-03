@@ -5,7 +5,7 @@ import random
 import logging
 import subprocess
 import sys
-import select
+import selectors
 from typing import NamedTuple, Callable
 
 import pynvml
@@ -468,33 +468,47 @@ def main():
 
     print(f"Running: {unknown_args}")
     env = os.environ.copy()
-    # env["PYTHONUNBUFFERED"] = 1
+
+    # add PYTHONUNBUFFERED to the environment for the new process to avoid any extra buffering
+    env["PYTHONUNBUFFERED"] = "1"
+
+    # text=True opens the output streams in non-binary format, bufsize=1 uses line-buffering mode
     cmd = subprocess.Popen(
-        unknown_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env
+        unknown_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, bufsize=1,
     )
 
-    # TODO probably needs more testing
-    while True:
-        reads = [cmd.stdout.fileno(), cmd.stderr.fileno()]
-        read_fds = select.select(reads, [], [])
+    # read a line from a file object associated with the new process and 
+    # write it to the appropriate system stream
+    def handle_output(input_stream, output_stream):
+        output_stream.write(input_stream.readline())
 
-        for fd in read_fds:
-            if fd == cmd.stdout.fileno():
-                output = cmd.stdout.readline()
-                if output is not None:
-                    print(output.strip())
-            elif fd == cmd.stderr.fileno():
-                output = cmd.stderr.readline()
-                if output is not None:
-                    print(output.strip(), file=sys.stderr)
+    # create a selector and register for READ events on both process output streams 
+    sel = selectors.DefaultSelector()
+    sel.register(cmd.stdout, selectors.EVENT_READ, (handle_output, sys.stdout))
+    sel.register(cmd.stderr, selectors.EVENT_READ, (handle_output, sys.stderr))
 
-        if cmd.poll() is not None:
-            break
+    # .poll() returns None if the process has NOT terminated
+    while cmd.poll() is None:
+        # check for READ events on the file objects registered above
+        sel_events = sel.select()
 
+        # the return value is a list of (key, events) tuples, where key is an object
+        # identifying a source registered above and events is the event(s) that 
+        # were triggered for that object. here we only care about read events so
+        # that values is ignored
+        for key, _ in sel_events:
+            # the .data field contains the value passed as the 3rd parameter to 
+            # selector.register above
+            callback, output_stream = key.data
+            callback(key.fileobj, output_stream)
+
+    # in case of any trailing output, try to flush it out here
     for output in cmd.stdout:
-        print(output.strip())
+        if output is not None:
+            print(output)
     for output in cmd.stderr:
-        print(output.strip(), file=sys.stderr)
+        if output is not None:
+            sys.stderr.write(output)
 
 
 if __name__ == "__main__":
